@@ -29,3 +29,9 @@ jobs:
             git commit -m "Update $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M KST'): data.json +${n:-0} lines"
             git push
           fi
+      - name: Telegram notice (completion only)
+        if: ${{ success() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python notify.py "icnkr 구인공고 페이지 업데이트 완료"
