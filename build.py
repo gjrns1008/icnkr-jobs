@@ -42,7 +42,7 @@ th{{background:#fafafa;position:sticky;top:0}} .tag{{background:#eef;border-radi
 .t{{max-width:460px}} .n{{text-align:right;white-space:nowrap}} tr.r{{cursor:pointer}} tr.r:hover{{background:#f6f8ff}} tr.r.open{{background:#eef2ff}}
 tr.d td{{background:#fafbff;padding:12px 16px}} .meta span{{display:inline-block;margin:0 14px 6px 0;color:#345}} .body{{white-space:normal;line-height:1.7}}</style>
 <h1>奋斗在韩国(icnkr) 招聘 공고</h1>
-<p class="sum">갱신 {now} · {len(rows)}건(상세 {nd}건) · 게시일 {dts[0]} ~ {dts[-1]} · 매일 2회(00:30·12:00 KST) 자동 수집 · 행을 클릭하면 공고 내용이 펼쳐집니다 · 중국어 원문, 자동 분류라 오분류 가능</p>
+<p class="sum">갱신 {now} · {len(rows)}건(상세 {nd}건) · 게시일 {dts[0]} ~ {dts[-1]} · 매일 저녁 8시(KST) 자동 수집 · 행을 클릭하면 공고 내용이 펼쳐집니다 · 중국어 원문, 자동 분류라 오분류 가능</p>
 <button class="on" data-f="">전체 <b>{len(rows)}</b></button>{btns}<br><input id="q" placeholder="검색 (예: 司机, 火锅, 400万)">
 <table><thead><tr><th>날짜</th><th>분류</th><th>제목</th><th>작성자</th><th>조회</th></tr></thead><tbody>{trs}</tbody></table>
 <script>let f='',q='';const rs=[...document.querySelectorAll('tr.r')];

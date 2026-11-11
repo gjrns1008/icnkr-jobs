@@ -1,8 +1,7 @@
 name: Collect icnkr jobs
 on:
   schedule:
-    - cron: '30 15 * * *'    # 매일 00:30 KST (UTC 15:30) — 전날 공고까지 반영
-    - cron: '0 3 * * *'      # 매일 12:00 KST
+    - cron: '0 11 * * *'     # 매일 20:00 KST (UTC 11:00)
   workflow_dispatch:
 permissions:
   contents: write
