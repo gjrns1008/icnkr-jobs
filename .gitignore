@@ -1,2 +1,4 @@
 run.log
 __pycache__/
+*.bak
+data.before.json

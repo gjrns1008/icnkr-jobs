@@ -1,0 +1,32 @@
+name: Collect icnkr jobs
+on:
+  schedule:
+    - cron: '30 15 * * *'    # 매일 00:30 KST (UTC 15:30) — 전날 공고까지 반영
+    - cron: '0 3 * * *'      # 매일 12:00 KST
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: collect
+  cancel-in-progress: false
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Collect new postings and rebuild index.html
+        run: python collect.py --days 2
+      - name: Commit if changed
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data.json index.html
+          if git diff --cached --quiet; then echo "no change"; else
+            n=$(git diff --cached --numstat data.json | awk '{print $1}')
+            git commit -m "Update $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M KST'): data.json +${n:-0} lines"
+            git push
+          fi

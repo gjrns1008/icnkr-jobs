@@ -1,114 +1,138 @@
-#!/usr/bin/env python3
-"""매일 실행: icnkr 앱 招聘 목록에서 '어제' 공고만 수집 -> data.json 병합 -> index.html 재생성 -> git push."""
-import json,subprocess,time,re,sys,os,datetime
-sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)))
+# -*- coding: utf-8 -*-
+"""奋斗在韩国(icnkr) 招工信息 게시판(fid=137, sortid=148)을 앱 공개 API로 수집한다.
+ - 로그인·기기 불필요 (GitHub Actions 에서 실행 가능)
+ - data.json 에 누적 병합 -> index.html 재생성
+사용: python collect.py [--dry] [--days N]
+기존 앱 화면 자동화 방식(cua-driver, macOS 전용)을 대체한다."""
+import json, re, sys, os, time, html, datetime, argparse
+import requests
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+os.chdir(HERE)
+sys.path.insert(0, HERE)
 import build
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
-CUA='/Users/xujun/.local/bin/cua-driver'
-BID='com.icnkr.xinhua'; S='icnkr-'+str(int(time.time()))
-DRY='--dry' in sys.argv
-def sh(*a,**k): return subprocess.run(a,capture_output=True,text=True,**k)
-def call(t,a,sess=True):
-    a=dict(a)
-    if sess: a['session']=S
-    return sh(CUA,'call',t,json.dumps(a)).stdout
-def jcall(t,a):
-    o=call(t,a)
-    try: return json.loads(o)
-    except Exception: return {}
-def ensure_daemon():
-    if 'is running' in sh(CUA,'status').stdout: return
-    subprocess.Popen([CUA,'serve'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True); time.sleep(4)
-_d=json.load(open('data.json'))
-if max(datetime.date.fromisoformat(r['date']) for r in _d)>=datetime.date.today():
-    print('up to date'); sys.exit()
-ensure_daemon()
-call('start_session',{})
-sh('pkill','-f','Wrapper/icnkr.app/icnkr'); time.sleep(2)
-pid=jcall('launch_app',{'bundle_id':BID}).get('pid'); 
-if not pid: sys.exit('launch failed')
-win=None
-for _ in range(20):
-    time.sleep(2)
-    for w in jcall('list_windows',{}).get('windows',[]):
-        if w['pid']==pid and w.get('title'): win=w['window_id']
-    if win: break
-if not win: sys.exit('no window')
-def state():
-    return jcall('get_window_state',{'pid':pid,'window_id':win,'include_screenshot':False})
-def txt(e): return e.get('label') or e.get('value') or ''
-def click_idx(idx,s=None):
-    s=s or state(); t=[e['element_token'] for e in s.get('elements',[]) if e['element_index']==idx]
-    if t: call('click',{'pid':pid,'window_id':win,'element_token':t[0]})
-def goto_tab():
-    for _ in range(10):
-        s=state(); r=[e['element_index'] for e in s.get('elements',[]) if e['role']=='AXRadioButton' and e.get('label')=='招聘']
-        if r: click_idx(r[0],s); time.sleep(4); 
-        s=state()
-        if listitems(s): return
-        time.sleep(3)
-def listitems(s):
-    r=[];meta=None
-    for e in s.get('elements',[]):
-        if e['role'].startswith('AXMenu'): continue
-        l=txt(e)
-        if e['role']=='AXStaticText' and '阅读' in l: meta=l
-        elif e['role']=='AXGenericElement' and meta: r.append((meta,l,e['element_token'])); meta=None
-    return r
-def is_detail(s): return any(e['role']=='AXHeading' for e in s.get('elements',[]))
-today=datetime.date.today(); yday=today-datetime.timedelta(days=1)
-data=json.load(open('data.json')); known={(r['a'],r['t']) for r in data}
-last=max(datetime.date.fromisoformat(r['date']) for r in data)
-start=last  # 마지막 수집일부터 다시 훑어 누락분 보충(중복은 known으로 제외)
-def to_date(dt):
-    if dt.startswith('昨天'): return yday
-    if re.search(r'分钟前|小时前|刚刚',dt): return today
-    m=re.match(r'(\d\d)-(\d\d)',dt)
-    if m:
-        d=datetime.date(today.year,int(m.group(1)),int(m.group(2)))
-        return d if d<=today else d.replace(year=today.year-1)
-    return today
-def day_of(dt):
-    d=to_date(dt)
-    if d>=today: return 'T'
-    return 'Y' if d>=start else 'O'
-new=[];done=set();older=0
-goto_tab()
-for it in range(300):
-    s=state()
-    if not s.get('elements'): time.sleep(3); goto_tab(); continue
-    if is_detail(s): click_idx(1,s); time.sleep(2); continue
-    items=listitems(s)
-    if not items: goto_tab(); continue
-    todo=[]
-    for meta,title,tok in items:
-        a,vw,dt=meta.split('\u3000'); k=(a,title.replace('\ufffc','').strip())
-        d=day_of(dt)
-        if d=='O': older+=1
-        if d=='Y' and k not in done and k not in known: todo.append((meta,title,tok,k,a,vw,dt))
-    if todo:
-        meta,title,tok,k,a,vw,dt=todo[0]; done.add(k)
-        call('click',{'pid':pid,'window_id':win,'element_token':tok}); time.sleep(3)
-        d=state()
-        if not is_detail(d): time.sleep(3); d=state()
-        f={};body=[]
-        if is_detail(d):
-            rows=[(e['role'],txt(e)) for e in d['elements'] if not e['role'].startswith('AXMenu')]
-            f,body=build.parse(rows); body=[b for b in body if b not in (a,dt)]
-            click_idx(1,d); time.sleep(2)
-        pd=to_date(dt); new.append(dict(dt=pd.strftime('%m-%d'),date=pd.isoformat(),a=a,v=vw.replace('阅读',''),t=k[1],f=f,b=body))
-        print('+',k[1][:30],flush=True); continue
-    if older>=3: break  # 보충 범위보다 오래된 공고에 도달
-    toks=[e['element_token'] for e in s['elements'] if e['role']=='AXGenericElement']
-    if toks: call('scroll',{'pid':pid,'window_id':win,'element_token':toks[0],'direction':'down','by':'page','amount':3}); time.sleep(1.2)
-call('end_session',{})
-sh('pkill','-f','Wrapper/icnkr.app/icnkr')
-print('collected',len(new))
-if DRY: sys.exit()
+
+B = 'https://app.icnkr.com'
+H = {'User-Agent': 'okhttp/4.9.3', 'Accept': 'application/json'}
+FID, SORTID = 1618, '393'
+KST = datetime.timezone(datetime.timedelta(hours=9))
+MAX_PAGES = 60
+
+ap = argparse.ArgumentParser()
+ap.add_argument('--dry', action='store_true')
+ap.add_argument('--days', type=int, default=3, help='마지막 수집일로부터 되짚어 볼 최소 일수(누락 보충)')
+args = ap.parse_args()
+
+
+def get(path, **params):
+    err = None
+    for i in range(4):
+        try:
+            r = requests.get(B + path, headers=H, params=params, timeout=40)
+            if r.status_code == 200: return r
+            err = r.status_code
+        except Exception as e:
+            err = e
+        time.sleep(2 * (i + 1))
+    raise RuntimeError(f'요청 실패 {path} {params} {err}')
+
+
+def kst(ts): return datetime.datetime.fromtimestamp(int(ts), KST)
+
+
+def balanced(s, start):
+    d = 0; ins = False; esc = False
+    for k in range(start, len(s)):
+        c = s[k]
+        if ins:
+            if esc: esc = False
+            elif c == chr(92): esc = True
+            elif c == '"': ins = False
+        else:
+            if c == '"': ins = True
+            elif c == '{': d += 1
+            elif c == '}':
+                d -= 1
+                if d == 0: return s[start:k + 1]
+
+
+def detail(tid):
+    """상세 페이지에서 (조건표 dict, 본문 줄 리스트) 반환."""
+    h = get('/mag/circle/v1/forum/threadViewPage', tid=tid, circle_id=0, mag_hide_progress=1).text
+    f = {}
+    for k, v in re.findall(r'<td width="30%">(.*?)</td>\s*<td\s*>(.*?)</td>', h, re.S):
+        k = html.unescape(re.sub(r'<[^>]+>', '', k)).strip(); v = html.unescape(re.sub(r'<[^>]+>', '', v)).replace('\xa0', ' ').strip()
+        if k in ('有效期至', '所在地区', '雇佣形式', '薪资待遇', '韩语水平', '招工类型', '行业分类', '工作内容') and v:
+            f[k] = v
+    body = []
+    i = h.find('"content":"')
+    if i < 0: return f, body
+    st = h.rfind('{', 0, h.rfind('"tid"', 0, i) + 1)
+    blob = balanced(h, st)
+    try:
+        row = json.loads(blob)
+    except Exception:
+        return f, body
+    c = row.get('content') or ''
+    c = c.split('<link rel="stylesheet"')[0]                 # 광고·경고 블록 이전까지가 본문
+    c = re.sub(r'<br\s*/?>', '\n', c, flags=re.I)
+    c = re.sub(r'</(p|div|li|tr)>', '\n', c, flags=re.I)
+    c = html.unescape(re.sub(r'<[^>]+>', '', c)).replace('\xa0', ' ')
+    for ln in c.split('\n'):
+        ln = ln.strip()
+        if ln and not ln.startswith('-- 提高警惕'): body.append(ln)
+    return f, body
+
+
+data = json.load(open('data.json', encoding='utf8'))
+for r in data:
+    r.setdefault('date', '2026-' + r['dt'])
+norm = lambda s: re.sub(r'[^\u4e00-\u9fffA-Za-z0-9가-힣]', '', s or '')
+known_tid = {r['tid'] for r in data if r.get('tid')}
+known_key = {(r['a'], norm(r['t'])) for r in data}
+last = max(datetime.date.fromisoformat(r['date']) for r in data)
+cutoff = datetime.datetime.combine(last - datetime.timedelta(days=args.days), datetime.time(0, 0), KST)
+print('last collected', last, '| scan back to', cutoff.date())
+
+# ---- 목록(작성 최신순) ----
+cands = {}
+for pg in range(1, MAX_PAGES + 1):
+    j = get('/mag/circle/v2/forum/forumViewV2', fid=FID, p=pg, order='dateline').json()
+    items = [x for x in j.get('list', []) if 'tid' in x and str(x.get('sortid')) == SORTID]
+    if not items: break
+    for x in items: cands[x['tid']] = x
+    if min(kst(x['create_time']) for x in items) < cutoff: break
+print('listed', len(cands), 'pages', pg)
+if len(cands) < 20:
+    sys.exit(f'목록 {len(cands)}건: 이상 응답으로 보고 중단합니다')
+
+from concurrent.futures import ThreadPoolExecutor
+todo = []
+for tid, x in sorted(cands.items(), key=lambda kv: -int(kv[1]['create_time'])):
+    ct = kst(x['create_time'])
+    if ct < cutoff: continue
+    title = re.sub(r'\s+', ' ', x.get('subject') or x.get('title') or '').strip()
+    if tid in known_tid or (x['user_name'], norm(title)) in known_key: continue
+    todo.append((tid, x, ct, title))
+
+def work(t):
+    tid, x, ct, title = t
+    try:
+        f, body = detail(tid)
+    except Exception as e:
+        print('detail fail', tid, e); f, body = {}, []
+    click = str(x.get('click', '')).replace('阅读', '').strip()
+    return dict(tid=tid, dt=ct.strftime('%m-%d'), date=ct.date().isoformat(), a=x['user_name'], v=click, t=title, f=f, b=body)
+
+with ThreadPoolExecutor(max_workers=8) as ex:
+    new = list(ex.map(work, todo))
+print('new', len(new))
+for n in new[:8]: print('  +', n['date'], n['a'], n['t'][:36], '|', len(n['b']), 'lines', n['f'].get('所在地区'))
+
+if args.dry: sys.exit()
 if new:
-    data+=new; json.dump(data,open('data.json','w'),ensure_ascii=False,indent=0)
-open('index.html','w').write(build.render(data))
-sh('git','add','data.json','index.html')
-if sh('git','diff','--cached','--quiet').returncode:
-    sh('git','commit','-qm',f'Update {today.isoformat()}: +{len(new)}')
-    print(sh('git','push','-q').stderr)
+    data += new
+    data.sort(key=lambda r: r['date'])
+    json.dump(data, open('data.json', 'w', encoding='utf8'), ensure_ascii=False, indent=0)
+open('index.html', 'w', encoding='utf8').write(build.render(data))
+print('wrote index.html', len(data), 'rows')
